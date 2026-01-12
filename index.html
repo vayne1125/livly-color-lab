@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Livly Color Lab - 顏色計算機</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="page-wrapper">
+        <div class="lang-switch-container">
+            <button id="info-btn" class="icon-btn" aria-label="Info">?</button>
+            <button id="lang-btn" class="lang-btn">EN/中</button>
+        </div>
+        <header class="header">
+            <h1 data-i18n="title">Livly Color Lab</h1>
+            <p class="app-subtitle" data-i18n="subtitle">Mix Perfect Colors with Minimal Feeds</p>
+        </header>
+
+        <div class="app-container">
+            <main class="calculator-card-content">
+                <!-- Calculator Panel (Left on Desktop) -->
+                <div class="calc-panel">
+                    <div class="color-inputs">
+                        <!-- Current Color -->
+                        <div class="input-group">
+                            <h2 data-i18n="current_color">當前顏色 (Current)</h2>
+                            <div class="color-preview" id="current-preview"></div>
+
+                            <div class="paste-area">
+                                <input type="text" id="paste-input" class="paste-input" placeholder="貼上 R100 G100 B100">
+                                <small data-i18n="paste_instruction">支援遊戲複製格式</small>
+                            </div>
+
+                            <div class="rgb-inputs">
+                                <label>R <input type="number" id="cur-r" min="0" max="450" value="0"></label>
+                                <label>G <input type="number" id="cur-g" min="0" max="450" value="0"></label>
+                                <label>B <input type="number" id="cur-b" min="0" max="450" value="0"></label>
+                            </div>
+                        </div>
+
+                        <!-- Arrow Divider -->
+                        <div class="divider">
+                            <span class="arrow">➜</span>
+                        </div>
+
+                        <!-- Target Color -->
+                        <div class="input-group">
+                            <h2 data-i18n="target_color">目標顏色 (Target)</h2>
+                            <div class="color-preview" id="target-preview"></div>
+
+                            <div class="paste-area">
+                                <input type="text" id="paste-input-target" class="paste-input"
+                                    placeholder="貼上 R100 G100 B100">
+                                <small data-i18n="paste_instruction">支援遊戲複製格式</small>
+                            </div>
+
+                            <div class="rgb-inputs">
+                                <label>R <input type="number" id="tar-r" min="0" max="450" value="0"></label>
+                                <label>G <input type="number" id="tar-g" min="0" max="450" value="0"></label>
+                                <label>B <input type="number" id="tar-b" min="0" max="450" value="0"></label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="actions">
+                        <div class="settings">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="allow-error" checked>
+                                <span data-i18n="allow_error">允許誤差 ±2</span>
+                            </label>
+                        </div>
+                        <div class="calc-buttons">
+                            <!-- <button id="calc-fast-btn" class="btn-secondary" data-i18n="calc_fast_btn">標準計算
+                                (快速)</button>
+                            <button id="calc-optimal-btn" class="btn-primary" data-i18n="calc_optimal_btn">深度計算
+                                (省飼料)</button> -->
+                            <button id="calc-fast-btn" class="btn-secondary" data-i18n="calc_fast_btn">標準計算</button>
+                            <button id="calc-optimal-btn" class="btn-primary" data-i18n="calc_optimal_btn">最佳計算</button>
+                        </div>
+                        <!-- Warning Note -->
+                        <div class="calc-note">
+                            <small data-i18n="calc_note">※ 最佳計算可能需要較長時間，請耐心等待</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="result-section" class="results hidden">
+                    <h3 data-i18n="recommended_menu">飼料清單</h3>
+                    <div id="error-msg" class="error-msg hidden"></div>
+                    <div id="solution-list" class="solution-list"></div>
+                </div>
+
+                <!-- Total Summary (Bottom Center) -->
+                <div class="total-summary" id="total-summary"
+                    style="width: 100%; text-align: center; margin-top: 20px;"></div>
+            </main>
+        </div>
+
+        <!-- Footer (Below Card) -->
+        <div
+            style="text-align: center; color: white; margin-top: 15px; padding-bottom: 30px; text-shadow: 0 1px 2px rgba(0,0,0,0.1);">
+            <div style="margin-bottom: 5px; opacity: 0.9; font-weight: bold;">Designed for Livly Island Players</div>
+            <div id="visitor-count" style="opacity: 0.8; font-size: 0.85rem;">Loading...</div>
+        </div>
+    </div>
+
+    <!-- Info Modal -->
+    <div id="info-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <button id="close-modal" class="close-btn">&times;</button>
+            <!-- About -->
+            <h3 data-i18n="about_title">關於本工具</h3>
+            <div class="modal-section">
+                <p data-i18n="about_desc_1">本計算機由玩家自製，非官方維護。</p>
+                <p data-i18n="about_desc_2">演算法持續優化中，致力於尋找最省果實的方案。</p>
+            </div>
+
+            <!-- Mode Explanation -->
+            <h3 data-i18n="mode_explanation_title">計算模式說明</h3>
+            <div class="modal-section mode-info">
+                <div class="mode-item">
+                    <strong data-i18n="mode_std_title">⚡ 標準模式 (Standard)</strong>
+                    <p data-i18n="mode_std_desc">快速計算，適合大部分情況。</p>
+                </div>
+                <div class="mode-item">
+                    <strong data-i18n="mode_deep_title">🧠 最佳模式 (Optimal)</strong>
+                    <p data-i18n="mode_deep_desc">最佳模式 (約 1-3 秒)，平均可節省約 9
+                        個飼料！雖然運算過程會盡力尋找最優的組合，但因組合極其龐大，結果僅供參考，無法保證絕對最優。</p>
+                </div>
+            </div>
+
+            <!-- Feedback -->
+            <h3 data-i18n="feedback_title">回饋與建議</h3>
+            <div class="modal-section feedback-form">
+                <div class="mode-desc" data-i18n="feedback_desc" style="margin-bottom: 8px; font-size: 0.9rem;">發現 Bug
+                    或有更好的演算法想法？歡迎告訴我們！</div>
+                <div style="display: flex; gap: 15px; align-items: flex-end;">
+                    <div style="flex: 1;">
+                        <textarea id="feedback-text" placeholder="Tell us something..." rows="3"
+                            style="width: 100%; margin-bottom: 5px;"></textarea>
+                        <button id="send-feedback-btn" class="btn-primary" style="width: 100%;"
+                            data-i18n="send_btn">送出回饋</button>
+                    </div>
+                    <img src="img/hamlot.png" alt="Hamlot" class="hamlot-img">
+                </div>
+            </div>
+
+            <!-- Version History (Changelog) -->
+            <div class="changelog-section">
+                <button id="changelog-btn" class="changelog-btn">v0.1.0 History</button>
+                <div id="changelog-content" class="changelog-content hidden">
+                    <div class="changelog-item">
+                        <small class="cl-date">2026/01/13</small>
+                        <span class="cl-ver">v0</span>
+                        <span class="cl-desc">Official Release & Responsive UI Optimization</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div style="height: 20px;"></div>
+    <!-- Third-party scripts (Busuanzi for counter) -->
+    <!-- <script async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script> -->
+    <script src="solver.js"></script>
+    <script src="script.js"></script>
+</body>
+
+</html>
