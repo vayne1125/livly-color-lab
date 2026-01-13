@@ -203,6 +203,8 @@ body {
 
 .input-group {
     flex: 1;
+    min-width: 0;
+    /* KEY FIX: Allows flex item to shrink below content size */
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -920,4 +922,139 @@ body {
 
 
 
+}
+
+/* --- Slider Styling (New) --- */
+.rgb-inputs {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+    box-sizing: border-box;
+    /* Ensure padding doesn't add width */
+}
+
+.rgb-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    /* Reduced gap slightly */
+    background: rgba(255, 255, 255, 0.5);
+    padding: 5px 8px;
+    /* Reduced padding slightly */
+    border-radius: 12px;
+    width: 100%;
+    box-sizing: border-box;
+    /* Crucial for preventing overflow */
+}
+
+.rgb-row .label {
+    font-weight: bold;
+    color: var(--text-secondary);
+    flex: 0 0 15px;
+    /* Fixed width */
+    text-align: center;
+}
+
+.rgb-row input[type="number"] {
+    flex: 0 0 55px;
+    /* Fixed width, won't shrink */
+    width: 55px;
+    /* Fallback */
+    text-align: center;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 5px 2px;
+    /* Tighter padding */
+    font-size: 0.95rem;
+}
+
+.color-slider {
+    flex: 1;
+    /* Takes all remaining space */
+    min-width: 0;
+    /* Allows flex item to shrink below content size if needed */
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    border-radius: 5px;
+    background: #e0e0e0;
+    outline: none;
+    cursor: pointer;
+}
+
+/* Slider Colors */
+.rgb-row.red .color-slider {
+    background: linear-gradient(to right, #e0e0e0, #ff9a9e);
+}
+
+.rgb-row.green .color-slider {
+    background: linear-gradient(to right, #e0e0e0, #a8e6cf);
+}
+
+.rgb-row.blue .color-slider {
+    background: linear-gradient(to right, #e0e0e0, #a1c4fd);
+}
+
+/* Slider Thumb */
+.color-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: white;
+    border: 2px solid #ccc;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    transition: transform 0.1s;
+}
+
+.color-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
+}
+
+.rgb-row.red .color-slider::-webkit-slider-thumb {
+    border-color: #ff9a9e;
+}
+
+.rgb-row.green .color-slider::-webkit-slider-thumb {
+    border-color: #a8e6cf;
+}
+
+.rgb-row.blue .color-slider::-webkit-slider-thumb {
+    border-color: #a1c4fd;
+}
+
+/* Mobile: Hide Sliders (User requested Desktop only) */
+@media (max-width: 480px) {
+    .color-slider {
+        display: none;
+    }
+
+    .rgb-inputs {
+        flex-direction: row;
+        /* Horizontal layout for number inputs on mobile */
+        justify-content: space-between;
+    }
+
+    .rgb-row {
+        flex-direction: column;
+        /* Stack Label and Input */
+        background: transparent;
+        padding: 0;
+        gap: 2px;
+        flex: 1;
+        /* Distribute width */
+    }
+
+    .rgb-row input[type="number"] {
+        width: 100%;
+        /* Full width in their slot */
+    }
+
+    .rgb-row .label {
+        width: auto;
+        font-size: 0.8rem;
+    }
 }

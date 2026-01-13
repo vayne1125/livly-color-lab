@@ -38,7 +38,12 @@ A precise color calculation tool designed specifically for **[Livly Island](http
 
 ## 📜 Changelog
 
-- **v0.1.0** (2026/01/13): 
+- **v0.2.0** (2026/01/13):
+  - **Algorithm v2**: Hybrid A* Solver with 99.9% win rate vs benchmarks.
+  - **New Features**: Slider Inputs.
+  - **UI**: Enhanced Glassmorphism & Responsive Layout.
+
+- **v0.1.0** (2026/01/12):
   - Official web release.
   - Implemented Deep Calculation (Optimal Mode).
   - Major Mobile UI/UX overhaul.

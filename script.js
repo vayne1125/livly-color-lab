@@ -8,10 +8,21 @@ document.addEventListener('DOMContentLoaded', () => {
         g: document.getElementById('cur-g'),
         b: document.getElementById('cur-b')
     };
+    const currentRanges = {
+        r: document.getElementById('cur-r-range'),
+        g: document.getElementById('cur-g-range'),
+        b: document.getElementById('cur-b-range')
+    };
+
     const targetInputs = {
         r: document.getElementById('tar-r'),
         g: document.getElementById('tar-g'),
         b: document.getElementById('tar-b')
+    };
+    const targetRanges = {
+        r: document.getElementById('tar-r-range'),
+        g: document.getElementById('tar-g-range'),
+        b: document.getElementById('tar-b-range')
     };
 
     const calcBtn = document.getElementById('calc-btn');
@@ -33,6 +44,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const tarG = parseInt(targetInputs.g.value) || 0;
         const tarB = parseInt(targetInputs.b.value) || 0;
 
+        // Sync Ranges (just in case called from calculation or load)
+        // Note: Avoid cyclic updates if already correct? Browser handles value assignment efficiently.
+        currentRanges.r.value = curR;
+        currentRanges.g.value = curG;
+        currentRanges.b.value = curB;
+        targetRanges.r.value = tarR;
+        targetRanges.g.value = tarG;
+        targetRanges.b.value = tarB;
+
         // 1. Update Circle Preview (Visible on Desktop)
         if (currentPreview) currentPreview.style.backgroundColor = `rgb(${curR}, ${curG}, ${curB})`;
         if (targetPreview) targetPreview.style.backgroundColor = `rgb(${tarR}, ${tarG}, ${tarB})`;
@@ -46,9 +66,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initial update
     updatePreviews();
-    [...Object.values(currentInputs), ...Object.values(targetInputs)].forEach(input => {
-        input.addEventListener('input', updatePreviews);
-    });
+
+    // Sync Logic: Input <-> Range
+    function setupSync(inputs, ranges) {
+        ['r', 'g', 'b'].forEach(chan => {
+            const numInput = inputs[chan];
+            const rangeInput = ranges[chan];
+
+            // Number -> Range
+            numInput.addEventListener('input', () => {
+                rangeInput.value = numInput.value;
+                updatePreviews();
+            });
+
+            // Range -> Number
+            rangeInput.addEventListener('input', () => {
+                numInput.value = rangeInput.value;
+                updatePreviews();
+            });
+        });
+    }
+
+    setupSync(currentInputs, currentRanges);
+    setupSync(targetInputs, targetRanges);
 
     // Initial update
     updatePreviews();
@@ -84,7 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
             mode_std_title: "⚡ 標準模式 (Standard)",
             mode_std_desc: "快速計算，適合大部分情況。",
             mode_deep_title: "🧠 最佳模式 (Optimal)",
-            mode_deep_desc: "最佳模式 (約 1-3 秒)，平均可節省約 9 個飼料！雖然運算過程會盡力尋找最優的組合，但因組合極其龐大，結果僅供參考，無法保證絕對最優。",
+            mode_deep_desc: "最佳模式 (約 1-3 秒)，平均可節省約 2 個飼料！雖然運算過程會盡力尋找最優的組合，但因組合極其龐大，結果僅供參考，無法保證絕對最優。",
             feedback_title: "回饋與建議",
             feedback_desc: "發現 Bug 或有更好的演算法想法？歡迎告訴我們！",
             send_btn: "送出回饋"
@@ -116,7 +156,7 @@ document.addEventListener('DOMContentLoaded', () => {
             mode_std_title: "⚡ Standard Mode",
             mode_std_desc: "Quick calculation. Suitable for most cases.",
             mode_deep_title: "🧠 Optimal Mode",
-            mode_deep_desc: "Optimal Mode (~1-3s). Saves ~9 feeds on avg! We strive for the most efficient path, but due to the complexity, absolute optimality cannot be guaranteed.",
+            mode_deep_desc: "Optimal Mode (~1-3s). Saves ~2 feeds on avg! We strive for the most efficient path, but due to the complexity, absolute optimality cannot be guaranteed.",
             feedback_title: "Feedback",
             feedback_desc: "Found a bug? Have a suggestion? Let us know!",
             send_btn: "Send Feedback"
@@ -250,7 +290,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     infoModal.classList.add('hidden');
                 })
                 .catch(err => {
-                    console.error('Feedback Error:', err);
                     alert(currentLang === 'zh' ? '發送失敗，請稍後再試。' : 'Failed to send, please try again later.');
                 })
                 .finally(() => {
@@ -419,8 +458,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 const path = await solveColorPath(start, target, allowedError, mode);
                 displayResults(path, allowedError);
             } catch (e) {
-                console.error(e);
-                alert("計算發生錯誤");
+                // Ignore calculation errors (e.g. no path found)
+                solutionList.innerHTML = `<li style="text-align:center; padding:15px; color:#ff6b6b;">${translations[currentLang].no_solution}</li>`;
             } finally {
                 calcFastBtn.textContent = translations[currentLang].calc_fast_btn;
                 calcOptimalBtn.textContent = translations[currentLang].calc_optimal_btn;

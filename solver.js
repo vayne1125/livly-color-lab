@@ -111,240 +111,218 @@ function getIndex(r, g, b) {
     return r + (g * SIZE) + (b * SIZE_SQ);
 }
 
+// --- Global Static Memory (Prevents OOM/GC during benchmarks) ---
+const SIZE_CUBED = SIZE * SIZE * SIZE;
+const G_SCORE_CACHE = new Int16Array(SIZE_CUBED);
+const SESSION_CACHE = new Uint16Array(SIZE_CUBED); // Marks which session visited which node
+let GLOBAL_SESSION_ID = 0;
+
 // A* Solver
 async function solveColorPath(start, target, allowedError = 2, mode = 'fast') {
-    // start: {r, g, b}, target: {r, g, b}
-    // mode: 'fast' (Greedy/Weighted) or 'optimal' (Admissible A*)
+    GLOBAL_SESSION_ID++;
+    // If sessions overflow, reset everything
+    if (GLOBAL_SESSION_ID >= 65535) {
+        GLOBAL_SESSION_ID = 1;
+        SESSION_CACHE.fill(0);
+    }
 
-    const openSet = new MinHeap(); // Use MinHeap instead of Array
-    const cameFrom = new Map(); // path reconstruction (Keep random access for now)
-
-    // OPTIMIZATION: Use Flat Int16Array for gScore instead of Map
-    // Size: 451^3 ≈ 91 million entries. 
-    // Int16 (2 bytes) => ~180MB RAM. very fast.
-    // Initialize with 32000 (simulating Infinity, since max steps is usually < 500)
-    const gScore = new Int16Array(SIZE * SIZE * SIZE).fill(32000);
-
-    // --- GREEDY PRE-PASS OPTIMIZATION ---
-    // For very large distances (e.g., 0 to 450), A* search depth (>60 steps) causes explosion.
-    // Since Larvae (+7) are the most efficient way to gain mass, we can greedily
-    // apply them, AND use Ants (-2) to reduce mass, until we are "close enough".
+    const openSet = new MinHeap();
+    const cameFrom = new Map();
 
     let currentState = { ...start };
     const prefixPath = [];
 
-    // Threshold: How close to target before handing over to A*?
-    // Fast limit: 21 (3 steps). 
-    // Optimal limit: 63 (9 steps) - Ultra Deep Mode.
-    // Pushed to utilize full 2s budget. 
-    // This allows finding optimal paths that are ~9 steps "non-greedy".
-    const ADDITION_THRESHOLD = mode === 'optimal' ? 63 : 21;
+    function applyBug(bug) {
+        currentState.r = Math.max(0, Math.min(450, currentState.r + bug.r));
+        currentState.g = Math.max(0, Math.min(450, currentState.g + bug.g));
+        currentState.b = Math.max(0, Math.min(450, currentState.b + bug.b));
+        prefixPath.push(bug);
+    }
 
-    // REDUCTION THRESHOLD pushed to 40 (20 ants).
-    // Allows A* to optimize long reduction sequences.
-    const REDUCTION_THRESHOLD = mode === 'optimal' ? 40 : 20;
+    // For Optimal Mode, we want to handover to A* ASAP (large threshold)
+    // so A* can optimize the bulk of the path.
+    // 77 was too tight (Hatena beat us). 200 was too loose (A* Timeout).
+    // 120 is the sweet spot (~17 steps).
+    const ADDITION_THRESHOLD = mode === 'optimal' ? 120 : 35;
+    const REDUCTION_THRESHOLD = mode === 'optimal' ? 120 : 35;
 
-    // 1. GREEDY REDUCTION (Ants: -2, -2, -2) - PRIORITY 1!
-    // We must reduce FIRST. 
-    // New Strategy: "Drain then Fill".
-    // If ANY channel is way too high, we MUST use Ants to drain it, even if it "hurts" other channels.
-    // Why? because increasing a channel (Larva +7) is cheap and easy.
-    // Reducing a channel (Ant -2) is slow and the only option.
-    // So if R needs -200, we use 100 Ants. If that drops G by 200 (into deficit), 
-    // the subsequent Greedy Addition phase will easily fix G with ~30 Larvae.
-    // This solves the "Paralysis" where it refused to reduce B because R was low.
+    // 1. SMART GREEDY REDUCTION & MIXED OPTIMIZATION
     while (true) {
-        const rSurplus = currentState.r - target.r > REDUCTION_THRESHOLD;
-        const gSurplus = currentState.g - target.g > REDUCTION_THRESHOLD;
-        const bSurplus = currentState.b - target.b > REDUCTION_THRESHOLD;
+        // Deltas: Target - Current (Positive = Needs Increase, Negative = Needs Decrease)
+        const dr = target.r - currentState.r;
+        const dg = target.g - currentState.g;
+        const db = target.b - currentState.b;
 
-        const anySurplus = rSurplus || gSurplus || bSurplus;
+        let actionTaken = false;
 
-        // Remove "Safe" checks. Priority is to eliminate massive surpluses.
-        // Collatoral damage to other channels will be repaired by the Larva loops below.
-        if (anySurplus) {
-            currentState.r = Math.max(0, currentState.r - 2);
-            currentState.g = Math.max(0, currentState.g - 2);
-            currentState.b = Math.max(0, currentState.b - 2);
-            prefixPath.push(BUGS[7]); // Japanese Wood Ant
-        } else {
-            break;
+        // --- PRIORITY 0: GOD MOVES (One stone, two/three birds) ---
+        // Check basic bugs (Ladybug, Locust, DorBeetle) to see if they perfectly align with needs.
+        // Ladybug (0): +4, -2, -2. Useful if: Need R+, Need G-, Need B-
+        // Locust (1): -2, +4, -2. Useful if: Need R-, Need G+, Need B-
+        // DorBeetle (2): -2, -2, +4. Useful if: Need R-, Need G-, Need B+
+
+        // Threshold for "God Moves" can be lower, we just want direction correctness
+        const ALIGN_THRESHOLD = 5;
+
+        if (dr > ALIGN_THRESHOLD && dg < -ALIGN_THRESHOLD && db < -ALIGN_THRESHOLD) {
+            applyBug(BUGS[0]); actionTaken = true; // Ladybug
+        } else if (dr < -ALIGN_THRESHOLD && dg > ALIGN_THRESHOLD && db < -ALIGN_THRESHOLD) {
+            applyBug(BUGS[1]); actionTaken = true; // Locust
+        } else if (dr < -ALIGN_THRESHOLD && dg < -ALIGN_THRESHOLD && db > ALIGN_THRESHOLD) {
+            applyBug(BUGS[2]); actionTaken = true; // Dor Beetle
         }
+
+        // --- HATENA STRATEGY: SUM-BASED REDUCTION ---
+        // Moved back to Priority 0.5 (After God Moves, Before Loose Alignment?)
+        // Actually, let's put it back to where it was useful but safe.
+        // Rule: If God Moves failed, AND we are massively overweight, then nuke.
+        const totalMassDiff = dr + dg + db;
+        if (!actionTaken && totalMassDiff < -100) { // Threshold changed to -100
+            applyBug(BUGS[7]);
+            actionTaken = true;
+        }
+
+        // Loose Alignment (2 out of 3 match, 3rd is neutral/small/acceptable sacrifice)
+        // We added checks for (R+, B-) and (G+, B-) and (B+, G-) which were missing.
+        if (!actionTaken) {
+            const MAJOR_DIFF = 40;
+            // Ladybug (+R, -G, -B)
+            if (dr > MAJOR_DIFF && dg < -MAJOR_DIFF) { applyBug(BUGS[0]); actionTaken = true; }
+            else if (dr > MAJOR_DIFF && db < -MAJOR_DIFF) { applyBug(BUGS[0]); actionTaken = true; } // NEW: R+, B-
+
+            // Locust (-R, +G, -B)
+            else if (dg > MAJOR_DIFF && dr < -MAJOR_DIFF) { applyBug(BUGS[1]); actionTaken = true; }
+            else if (dg > MAJOR_DIFF && db < -MAJOR_DIFF) { applyBug(BUGS[1]); actionTaken = true; } // NEW: G+, B-
+
+            // Dor Beetle (-R, -G, +B)
+            else if (db > MAJOR_DIFF && dr < -MAJOR_DIFF) { applyBug(BUGS[2]); actionTaken = true; }
+            else if (db > MAJOR_DIFF && dg < -MAJOR_DIFF) { applyBug(BUGS[2]); actionTaken = true; } // NEW: B+, G-
+        }
+
+        if (actionTaken) {
+            // Re-evaluate loop
+            continue;
+        }
+
+        // --- PRIORITY 1: SAFE MACROS (Preserve other channels) ---
+        // Calc Surplus (Current - Target) for Reduction Logic
+        const surR = currentState.r - target.r;
+        const surG = currentState.g - target.g;
+        const surB = currentState.b - target.b;
+
+        const rs = surR > REDUCTION_THRESHOLD;
+        const gs = surG > REDUCTION_THRESHOLD;
+        const bs = surB > REDUCTION_THRESHOLD;
+
+        if (rs && gs && bs) applyBug(BUGS[7]);
+        else if (rs && gs) { applyBug(BUGS[2]); applyBug(BUGS[7]); applyBug(BUGS[7]); }
+        else if (gs && bs) { applyBug(BUGS[0]); applyBug(BUGS[7]); applyBug(BUGS[7]); }
+        else if (rs && bs) { applyBug(BUGS[1]); applyBug(BUGS[7]); applyBug(BUGS[7]); }
+        else if (rs) { applyBug(BUGS[1]); applyBug(BUGS[2]); applyBug(BUGS[7]); }
+        else if (gs) { applyBug(BUGS[0]); applyBug(BUGS[2]); applyBug(BUGS[7]); }
+        else if (bs) { applyBug(BUGS[0]); applyBug(BUGS[1]); applyBug(BUGS[7]); }
+        else break;
     }
 
-    // 2. GREEDY ADDITION (Larvae: +7) - PRIORITY 2
-    // Now that we have cleared space, fill up the necessary buckets.
+    // 2. GREEDY ADDITION
+    while (target.r - currentState.r > ADDITION_THRESHOLD) applyBug(BUGS[3]);
+    while (target.g - currentState.g > ADDITION_THRESHOLD) applyBug(BUGS[4]);
+    while (target.b - currentState.b > ADDITION_THRESHOLD) applyBug(BUGS[5]);
 
-    // Red
-    while (target.r - currentState.r > ADDITION_THRESHOLD) {
-        currentState.r += 7;
-        prefixPath.push(BUGS[3]); // Indian Fritillary Larva (Red)
-    }
-    // Green
-    while (target.g - currentState.g > ADDITION_THRESHOLD) {
-        currentState.g += 7;
-        prefixPath.push(BUGS[4]); // Cabbage Butterfly Larva (Green)
-    }
-    // Blue
-    while (target.b - currentState.b > ADDITION_THRESHOLD) {
-        currentState.b += 7;
-        prefixPath.push(BUGS[5]); // Hawk Moth Larva (Blue)
-    }
-
-    // Define start point for A* as the state AFTER greedy moves
     const startIndex = getIndex(currentState.r, currentState.g, currentState.b);
-    gScore[startIndex] = 0;
+    G_SCORE_CACHE[startIndex] = 0;
+    SESSION_CACHE[startIndex] = GLOBAL_SESSION_ID;
 
-    // For fScore, we don't strictly one for every node if we calculate f on the fly or store in openSet node.
-    // But to keep A* standard, we can verify against known best f. 
-    // Actually, standard A* only checks gScore for repathing. f is derived. 
-    // We only need gScore for the "Visited/Better Path" check.
+    // Unified Heuristic Function (Admissible Lower Bound)
+    function getH(r, g, b) {
+        const dr = target.r - r; const dg = target.g - g; const db = target.b - b;
+        const adr = Math.abs(dr); const adg = Math.abs(dg); const adb = Math.abs(db);
+
+        // Max component progress (+7 or -2 / -6 combo)
+        const stepsR = dr > 0 ? adr / 7 : adr / 2;
+        const stepsG = dg > 0 ? adg / 7 : adg / 2;
+        const stepsB = db > 0 ? adb / 7 : adb / 2;
+        const minStepsComponent = Math.max(stepsR, stepsG, stepsB);
+
+        // Sum difference progress
+        const sumDiff = dr + dg + db;
+        const minStepsSum = sumDiff > 0 ? sumDiff / 7 : (-sumDiff) / 6;
+
+        // Take max of the lower bounds
+        const smartH = Math.max(minStepsComponent, minStepsSum, Math.sqrt(dr * dr + dg * dg + db * db) / 7);
+
+        // PURE A* vs WEIGHTED A*
+        // Optimal: Weight 1.0 (Pure A*) guarantees shortest path.
+        // Fast: Weight 1.02 (Slightly Greedy) fits browser limits.
+        // Even 1.02 can accumulate errors in 200-step paths (1.02^170 = 29x error).
+        // So for Optimal, we MUST use 1.0 to beat Hatena's rule-based logic.
+        const weight = mode === 'optimal' ? 1.0 : 1.02;
+
+        // Tie-breaker 1: Prefer moves reducing total Manhattan distance (Standard)
+        const manhattan = adr + adg + adb;
+
+        // Tie-breaker 2: Mass Balance (New!)
+        // Encourage keeping the Total Mass (R+G+B) close to Target Mass.
+        // Penalty is tiny (0.000001 range) to not break admissibility rules if weight=1.
+        const totalMassDiff = dr + dg + db; // Re-calculate or use from scope? It is in scope.
+        const massPenalty = Math.abs(totalMassDiff) * 0.000001;
+
+        const secondaryH = (manhattan * 0.000001) + massPenalty;
+
+        return (smartH * weight) + secondaryH;
+    }
 
     openSet.push({
-        state: currentState,
+        state: { ...currentState },
         g: 0,
-        f: distance(start, target)
+        f: getH(currentState.r, currentState.g, currentState.b)
     });
 
-    // Configuration based on mode
-    let MAX_STEPS = 50;
-    let MAX_ITERATIONS = 5000;
-
-    if (mode === 'optimal') {
-        MAX_STEPS = 500;
-        MAX_ITERATIONS = 5000000; // Increased to 5M for Ultra Deep search (Threshold 63)
-    } else {
-        // Boosted Fast Mode limits based on new optimized engine
-        MAX_STEPS = 300;     // Increased from 100 to allow complex paths
-        MAX_ITERATIONS = 200000; // Increased from 5000 to ensure convergence
-    }
+    // Extremely high iteration limit for Optimal to ensure it finishes the expanded search space (radius 42)
+    let MAX_ITERATIONS = mode === 'optimal' ? 5000000 : 500000;
+    let MAX_STEPS = mode === 'optimal' ? 500 : 400;
 
     let bestNode = null;
     let minDist = Infinity;
     let iterations = 0;
 
-    // Cache yield promise
-    const timeSlice = 5000;
-
     while (openSet.size() > 0) {
         iterations++;
+        if (iterations % 10000 === 0) await new Promise(r => setTimeout(r, 0));
 
-        if (iterations % timeSlice === 0) {
-            await new Promise(resolve => setTimeout(resolve, 0));
-        }
-
-        // Pop best node from Heap (O(logN)) instead of Sort+Shift (O(NlogN))
         const current = openSet.pop();
         const { r, g, b } = current.state;
-        const currentIndex = getIndex(r, g, b);
+        const idx = getIndex(r, g, b);
 
-        // OPTIMIZATION: Array Lookup (O(1))
-        // If the g-score in our node is worse than what's already in the table, skip.
-        if (current.g > gScore[currentIndex]) {
-            continue;
+        if (SESSION_CACHE[idx] === GLOBAL_SESSION_ID && current.g > G_SCORE_CACHE[idx]) continue;
+
+        const d = distance(current.state, target);
+        if (d < minDist) { minDist = d; bestNode = current; }
+
+        if (d <= (allowedError === 0 ? 0.3 : allowedError + 0.3)) {
+            return prefixPath.concat(reconstructPath(cameFrom, current.state));
         }
 
-        const currentDist = distance(current.state, target);
-
-        if (currentDist < minDist) {
-            minDist = currentDist;
-            bestNode = current;
-        }
-
-        const tolerance = allowedError === 0 ? 0.5 : allowedError + 0.5;
-        if (currentDist <= tolerance) {
-            const aStarPath = reconstructPath(cameFrom, current.state);
-            return prefixPath.concat(aStarPath);
-        }
-
-        if (iterations > MAX_ITERATIONS) {
-            if (mode === 'optimal') console.warn("Max iterations reached.");
-            const aStarPath = reconstructPath(cameFrom, bestNode.state);
-            return prefixPath.concat(aStarPath);
-        }
-
+        if (iterations > MAX_ITERATIONS) break;
         if (current.g >= MAX_STEPS) continue;
 
-        // Try every bug
         for (const bug of BUGS) {
-            let nextR = r + bug.r;
-            let nextG = g + bug.g;
-            let nextB = b + bug.b;
+            let nr = r + bug.r; let ng = g + bug.g; let nb = b + bug.b;
+            if (nr < 0) nr = 0; else if (nr > 450) nr = 450;
+            if (ng < 0) ng = 0; else if (ng > 450) ng = 450;
+            if (nb < 0) nb = 0; else if (nb > 450) nb = 450;
 
-            // Fast clamp
-            if (nextR < 0) nextR = 0; else if (nextR > 450) nextR = 450;
-            if (nextG < 0) nextG = 0; else if (nextG > 450) nextG = 450;
-            if (nextB < 0) nextB = 0; else if (nextB > 450) nextB = 450;
+            const nIdx = getIndex(nr, ng, nb);
+            const ngScore = current.g + 1;
 
-            const nextIndex = getIndex(nextR, nextG, nextB);
-            const tentativeG = current.g + 1;
-
-            // Direct Array Access - Huge Speedup
-            if (tentativeG < gScore[nextIndex]) {
-                gScore[nextIndex] = tentativeG;
-
-                // Key for cameFrom map - we still use integer key for map if possible or string. 
-                // Let's use the Index as the Map key! significantly faster than string generaton.
-                cameFrom.set(nextIndex, { prev: current.state, bug: bug });
-
-                let h = 0;
-                if (mode === 'optimal') {
-                    const dr = target.r - nextR;
-                    const dg = target.g - nextG;
-                    const db = target.b - nextB;
-
-                    // Inlining distance logic for speed
-                    const distSq = dr * dr + dg * dg + db * db;
-                    const minStepsEuclidean = Math.sqrt(distSq) / 7;
-
-                    const stepsR = dr > 0 ? dr / 7 : (-dr) / 2;
-                    const stepsG = dg > 0 ? dg / 7 : (-dg) / 2;
-                    const stepsB = db > 0 ? db / 7 : (-db) / 2;
-                    const minStepsComponent = (stepsR > stepsG) ? (stepsR > stepsB ? stepsR : stepsB) : (stepsG > stepsB ? stepsG : stepsB);
-
-                    // NEW: Sum Difference Heuristic
-                    // Larvae (efficient moves) add to Total Sum. 
-                    // Single component heuristic underestimates cost because it assumes independent parallel moves.
-                    // But +7 R and +7 G requires 2 steps, not 1.
-                    // Total Sum captures this accumulation.
-                    const sumDiff = dr + dg + db;
-                    let minStepsSum = 0;
-                    if (sumDiff > 0) {
-                        // Max accumulation rate is +7 (Larva)
-                        minStepsSum = sumDiff / 7;
-                    } else {
-                        // Max reduction rate is -6 (Ant: -2-2-2)
-                        minStepsSum = (-sumDiff) / 6;
-                    }
-
-                    // Take the strongest admissible heuristic
-                    let smartH = minStepsComponent;
-                    if (minStepsEuclidean > smartH) smartH = minStepsEuclidean;
-                    if (minStepsSum > smartH) smartH = minStepsSum;
-
-                    // TIE-BREAKER:
-                    // We add a tiny fraction for tie-breaking (preferring moves that help multiple axis).
-                    // But for "Optimal", we must ensure h <= true_cost.
-                    // Our heuristic (max component) is a lower bound (underestimates).
-                    // Adding a tiny epsilon doesn't break admissibility because real cost is usually integer steps.
-                    const secondaryH = stepsR + stepsG + stepsB;
-
-                    // PURE A* (Weight 1.0)
-                    // This guarantees the mathematically shortest path.
-                    // 1.001 was slightly greedy. 1.0 is perfect.
-                    // Reduced tie-breaker to 1e-6 to ensure h <= cost (Admissibility).
-                    h = (smartH * 1.0) + (secondaryH * 0.000001);
-                } else {
-                    const dr = target.r - nextR;
-                    const dg = target.g - nextG;
-                    const db = target.b - nextB;
-                    h = Math.sqrt(dr * dr + dg * dg + db * db);
-                }
-
+            if (SESSION_CACHE[nIdx] !== GLOBAL_SESSION_ID || ngScore < G_SCORE_CACHE[nIdx]) {
+                G_SCORE_CACHE[nIdx] = ngScore;
+                SESSION_CACHE[nIdx] = GLOBAL_SESSION_ID;
+                cameFrom.set(nIdx, { prev: { r, g, b }, bug });
                 openSet.push({
-                    state: { r: nextR, g: nextG, b: nextB },
-                    g: tentativeG,
-                    f: tentativeG + h
+                    state: { r: nr, g: ng, b: nb },
+                    g: ngScore,
+                    f: ngScore + getH(nr, ng, nb)
                 });
             }
         }
@@ -354,17 +332,18 @@ async function solveColorPath(start, target, allowedError = 2, mode = 'fast') {
     return prefixPath.concat(finalPath);
 }
 
-function reconstructPath(cameFrom, currentState) {
+function reconstructPath(cameFrom, targetState) {
+    // ... (Existing implementation) ...
     const path = [];
-    let curr = currentState;
-    // Reconstruction needs to use same key logic (Index)
+    let curr = targetState;
     let key = getIndex(curr.r, curr.g, curr.b);
-
-    while (cameFrom.has(key)) {
+    let protection = 0;
+    while (cameFrom.has(key) && protection < 1000) {
         const node = cameFrom.get(key);
         path.unshift(node.bug);
         curr = node.prev;
         key = getIndex(curr.r, curr.g, curr.b);
+        protection++;
     }
     return path;
 }

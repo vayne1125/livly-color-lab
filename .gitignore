@@ -1,13 +1,15 @@
 # Exclude the cursor resizing script
 resize_cursor.ps1
 
-# Exclude testing/benchmark tools
-test_benchmark.js
-test_runner.html
-
 # Common ignores
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
 *.log
+
+# Internal Benchmarks & Reference Code
+test_benchmark.js
+test_runner.html
+hatena_logic.js
+hatena_solver.js
